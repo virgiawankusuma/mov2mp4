@@ -1,9 +1,10 @@
 # mov2mp4
 
-Converter `.mov` ke `.mp4` lewat command line, satu file atau batch satu folder. Dibuat dengan Python dan memanfaatkan [ffmpeg](https://ffmpeg.org/) di balik layar.
+Converter `.mov` ke `.mp4` lewat GUI desktop native maupun command line, satu file atau batch satu folder. Dibuat dengan Python dan memanfaatkan [ffmpeg](https://ffmpeg.org/) di balik layar.
 
 ## Fitur
 
+- **GUI Desktop & CLI**: Pilih antarmuka grafis yang praktis atau perintah terminal yang fleksibel.
 - **File satuan atau batch folder**, termasuk subfolder (`-r`).
 - **Otomatis pilih metode**: kalau video sudah H.264 (umum dari kamera/iPhone lama), cuma ganti container tanpa re-encode, jadi instan dan kualitas utuh. Kalau codec-nya lain (HEVC, ProRes, dll), di-encode ulang ke H.264.
 - **Dua profil kualitas**: `max` (kualitas maksimal) dan `medium` (file lebih kecil).
@@ -12,7 +13,7 @@ Converter `.mov` ke `.mp4` lewat command line, satu file atau batch satu folder.
 - **Konversi paralel**: beberapa file dikerjain bersamaan saat batch folder.
 - **Estimasi ukuran file** sebelum konversi, dengan mode `--accurate` untuk hasil lebih mendekati kenyataan.
 - **Progress bar dan estimasi sisa waktu** per file.
-- **Aman**: output ditulis ke file sementara dulu, jadi pembatalan (Ctrl+C) nggak ninggalin `.mp4` setengah jadi. Satu file gagal nggak menghentikan batch.
+- **Aman**: output ditulis ke file sementara dulu, jadi pembatalan (Ctrl+C atau Stop di GUI) nggak ninggalin `.mp4` setengah jadi. Satu file gagal nggak menghentikan batch.
 - **Metadata asli ikut terbawa** (tanggal rekam, dll) dan `faststart` diaktifkan supaya enak di-stream.
 
 ## Kebutuhan
@@ -39,7 +40,32 @@ brew install ffmpeg          # macOS
 sudo apt install ffmpeg      # Debian/Ubuntu
 ```
 
-## Cara pakai
+## GUI Desktop
+
+`mov2mp4` menyediakan antarmuka desktop native (`mov2mp4_gui.py`) berbasis Tkinter yang ringan dan langsung siap pakai tanpa perlu instalasi library pihak ketiga.
+
+### Cara Menjalankan
+
+1. **Lewat Start Menu**: Cari **"mov2mp4"** pada Start Menu Windows.
+2. **Lewat Double-Click**: Buka file `buka_gui.bat` langsung dari File Explorer.
+3. **Lewat Terminal**:
+   ```
+   python mov2mp4_gui.py
+   ```
+
+### Ringkasan Fitur GUI
+
+- **File & Folder Picker**: Pilih satu file video `.mov` atau seluruh folder untuk batch processing.
+- **Pengaturan Profil & GPU**: Pilih profil kualitas (`max` / `medium`), target resolusi, serta akselerasi hardware GPU (Auto, NVIDIA NVENC, Intel QSV, AMD AMF, atau CPU).
+- **Estimasi Ukuran**: Periksa perkiraan ukuran file hasil konversi sebelum proses dimulai.
+- **Progress Bar Realtime**: Pantau perkembangan konversi, kecepatan frame, dan log aktivitas secara langsung.
+- **Tombol Stop / Cancel**: Hentikan proses konversi kapan saja dengan aman tanpa merusak file input maupun output.
+
+---
+
+## Command Line Interface (CLI)
+
+### Cara pakai
 
 ```
 python mov2mp4.py <input> [opsi]
