@@ -398,7 +398,7 @@ class Mov2Mp4GUI:
 
     def _worker_estimate(self, files, prof, scale_key, mode, gpu_choice, accurate):
         total_files = len(files)
-        gpu = resolve_gpu(gpu_choice)
+        gpu = resolve_gpu(gpu_choice, warn_cb=lambda msg: self.queue.put(("log", msg)))
 
         self.queue.put(("log", f"--- MULAI ESTIMASI ({total_files} file) ---"))
         self.queue.put(("log", f"Profil: {prof['label']} | Mode: {mode} | Resolusi: {scale_key} | GPU: {gpu}"))
@@ -495,7 +495,7 @@ class Mov2Mp4GUI:
 
     def _worker_convert(self, files, src, out_arg, prof, scale_key, mode, gpu_choice, force, accurate):
         total_files = len(files)
-        gpu = resolve_gpu(gpu_choice)
+        gpu = resolve_gpu(gpu_choice, warn_cb=lambda msg: self.queue.put(("log", msg)))
 
         self.queue.put(("log", f"--- MEMULAI KONVERSI ({total_files} file) ---"))
         enc_label = {"nvenc": "NVIDIA NVENC", "qsv": "Intel QSV", "amf": "AMD AMF"}.get(gpu, "CPU (libx264)")
@@ -623,11 +623,68 @@ class Mov2Mp4GUI:
                     self.current_tmp = None
                     break
 
+                if proc.returncode != 0 and gpu != "none":
+                    if tmp.exists():
+                        tmp.unlink(missing_ok=True)
+                    self.queue.put(("log", f"  [!] Encode GPU ({gpu}) gagal. Mencoba ulang dengan CPU (libx264)..."))
+                    gpu_retry = "none"
+                    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", str(f), "-map", "0:v:0"]
+                    for a_idx in info.audio_idx:
+                        cmd += ["-map", f"0:{a_idx}"]
+                    cmd += ["-sn", "-dn", "-map_metadata", "0"]
+                    cmd += ["-c:v", "copy"] if vcopy else video_args(prof, scale_key, gpu_retry)
+                    cmd += ["-c:a", "copy"] if acopy else ["-c:a", "aac", "-b:a", f"{prof['abr']}k"]
+                    cmd += ["-movflags", "+faststart", str(tmp)]
+                    full_cmd = cmd + ["-progress", "pipe:1", "-nostats"]
+                    proc = subprocess.Popen(
+                        full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, encoding="utf-8", errors="replace",
+                        creationflags=creationflags
+                    )
+                    self.current_proc = proc
+                    errors = []
+                    start_time = time.time()
+                    try:
+                        for line in proc.stdout:
+                            if self.cancel_event.is_set():
+                                proc.kill()
+                                break
+                            line = line.strip()
+                            if line.startswith("out_time_us="):
+                                try:
+                                    done_sec = int(line.split("=", 1)[1]) / 1_000_000
+                                    if info.duration > 0:
+                                        pct = min(100.0, done_sec / info.duration * 100)
+                                        elapsed = time.time() - start_time
+                                        eta_sec = (elapsed / pct * (100 - pct)) if pct > 1 else 0
+                                        self.queue.put(("progress", pct, f"[{idx}/{total_files}] {pct:.1f}% | Sisa ~{fmt_dur(eta_sec)}"))
+                                except (ValueError, ZeroDivisionError):
+                                    pass
+                            elif "=" not in line and line:
+                                errors.append(line)
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    self.current_proc = None
+
+                if self.cancel_event.is_set():
+                    if tmp.exists():
+                        tmp.unlink(missing_ok=True)
+                    self.current_tmp = None
+                    break
+
                 if proc.returncode != 0:
                     if tmp.exists():
                         tmp.unlink(missing_ok=True)
                     self.current_tmp = None
-                    err_text = "\n    ".join(errors[-10:]) if errors else f"Exit code {proc.returncode}"
+                    relevant_errors = errors if len(errors) <= 6 else errors[:3] + ["..."] + errors[-3:]
+                    err_text = "\n    ".join(relevant_errors) if relevant_errors else f"Exit code {proc.returncode}"
                     raise RuntimeError(f"FFmpeg gagal:\n    {err_text}")
 
                 # Berhasil konversi: pindahkan temporary file ke file tujuan akhir
@@ -657,6 +714,9 @@ class Mov2Mp4GUI:
         if self.cancel_event.is_set():
             self.queue.put(("status", "Proses dibatalkan"))
             self.queue.put(("log", "\n=== Proses Dibatalkan ==="))
+        elif stats["failed"] > 0:
+            self.queue.put(("status", f"Selesai dengan catatan: {stats['failed']} file gagal"))
+            self.queue.put(("log", "\n=== Ringkasan Konversi ==="))
         else:
             self.queue.put(("status", "Semua file selesai dikonversi"))
             self.queue.put(("log", "\n=== Ringkasan Konversi ==="))

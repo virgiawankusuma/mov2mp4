@@ -61,6 +61,7 @@ GPU_ENCODERS = {
 
 _print_lock = threading.Lock()
 _encoders_cache = None
+_tested_encoders = {}
 
 
 def available_encoders():
@@ -73,18 +74,39 @@ def available_encoders():
     return _encoders_cache
 
 
-def resolve_gpu(choice):
-    """'auto' -> cari GPU encoder pertama yg didukung ffmpeg, fallback ke 'none' (CPU)."""
+def test_encoder(encoder_name):
+    """Uji encoder dengan encode satu frame; hasil pengujian disimpan dalam cache."""
+    if encoder_name in _tested_encoders:
+        return _tested_encoders[encoder_name]
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "nullsrc=s=64x64:d=0.04", "-frames:v", "1", "-c:v", encoder_name,
+           "-f", "null", "-"]
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=5,
+                                creationflags=creationflags)
+        passed = result.returncode == 0
+    except Exception:
+        passed = False
+    _tested_encoders[encoder_name] = passed
+    return passed
+
+
+def resolve_gpu(choice, warn_cb=None):
+    """Pilih encoder GPU yang benar-benar dapat dijalankan; selainnya gunakan CPU."""
+    log_warn = warn_cb if warn_cb else print
     enc_list = available_encoders()
     if choice == "auto":
         for key, name in GPU_ENCODERS.items():
-            if name in enc_list:
+            if name in enc_list and test_encoder(name):
                 return key
         return "none"
-    if choice != "none" and GPU_ENCODERS[choice] not in enc_list:
-        print(f"Peringatan: ffmpeg di sistem ini tidak punya encoder {GPU_ENCODERS[choice]} "
-              f"(biasanya butuh GPU + driver yang cocok). Pakai CPU (libx264) saja.")
-        return "none"
+    if choice != "none":
+        name = GPU_ENCODERS[choice]
+        if name not in enc_list or not test_encoder(name):
+            log_warn(f"Peringatan: encoder {name} tidak tersedia atau gagal diuji. "
+                     "Pakai CPU (libx264) saja.")
+            return "none"
     return choice
 
 # Pilihan resolusi = batas sisi PENDEK video (jadi video portrait iPhone juga benar:
@@ -396,6 +418,22 @@ def convert_one(src, dst, prof, mode, scale_key, force, estimate_only, accurate,
     except KeyboardInterrupt:
         tmp.unlink(missing_ok=True)
         raise
+    if code != 0 and gpu != "none":
+        tmp.unlink(missing_ok=True)
+        p("  Catatan: Encode GPU gagal. Mencoba ulang dengan CPU (libx264)...")
+        cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+               "-map", "0:v:0"]
+        for idx in info.audio_idx:
+            cmd += ["-map", f"0:{idx}"]
+        cmd += ["-sn", "-dn", "-map_metadata", "0"]
+        cmd += ["-c:v", "copy"] if vcopy else video_args(prof, scale_key, "none")
+        cmd += ["-c:a", "copy"] if acopy else ["-c:a", "aac", "-b:a", f"{prof['abr']}k"]
+        cmd += ["-movflags", "+faststart", str(tmp)]
+        try:
+            code, errs = run_ffmpeg(cmd, info.duration, quiet, tag=f"{tag} " if tag else "")
+        except KeyboardInterrupt:
+            tmp.unlink(missing_ok=True)
+            raise
     if code != 0:
         tmp.unlink(missing_ok=True)
         if quiet:
